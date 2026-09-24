@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+.git/
+.playwright-cli/
+*.log
+preview-*.png
+tests/
+App_Data/

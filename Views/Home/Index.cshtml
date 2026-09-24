@@ -1,0 +1,44 @@
+@model WorkbenchViewModel
+@{ ViewData["Title"] = Model.Title; }
+<div class="app-shell" data-tool="@Model.Tool" data-demo="@Model.Demo.ToString().ToLowerInvariant()" data-base="@Url.Content("~/")">
+    <aside class="sidebar" aria-label="Main navigation">
+        <a class="brand" href="?tool=schema&demo=@Model.Demo"><span class="brand-icon">▤</span><span>SQL Workbench<small>Database developer tools</small></span></a>
+        <div class="workspace-label"><span class="workspace-avatar">D</span><span>Developer workspace<small>Local session</small></span><span class="live-dot"></span></div>
+        <p class="nav-label">Workspace</p>
+        <nav>
+            @foreach (var item in new[] { ("connections", "Connections", "database"), ("explorer", "Database explorer", "folder"), ("schema", "Schema compare", "compare"), ("data", "Data compare", "table"), ("scripts", "Schema scripts", "code"), ("inserts", "INSERT generator", "file") })
+            {
+                <a href="?tool=@item.Item1&demo=@Model.Demo" class="nav-item @(Model.Tool == item.Item1 ? "active" : "")" aria-current="@(Model.Tool == item.Item1 ? "page" : null)"><span data-icon="@item.Item3"></span>@item.Item2</a>
+            }
+        </nav>
+        <div class="sidebar-connections" id="sidebar-connections">
+        @if (Model.Demo) { <div class="nav-label">Demo connections <span>2</span></div><div><i class="live-dot"></i>Commerce · Development</div><div><i class="live-dot amber"></i>Commerce · Staging</div> }
+        else { <div class="nav-label">Session connections</div><div>Loading connections…</div> }
+        </div>
+        <div class="sidebar-bottom"><span data-icon="shield"></span><div>Read & generate<small>Changes are never applied</small></div></div>
+        <div class="version">SQL Server toolkit <span>Workbench v1.0</span></div>
+    </aside>
+    <div class="main-shell">
+        <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong>@Model.Title</strong></div><div class="topbar-right"><a class="button small" href="?tool=@Model.Tool&demo=@(!Model.Demo)">@(Model.Demo ? "Open live workspace" : "Try demo")</a><span class="demo-badge"><i></i> @(Model.Demo ? "Demo mode" : "Live workspace")</span><button class="icon-button" id="help-button" aria-label="About this workbench"><span data-icon="help"></span></button></div></header>
+        <main id="workspace" tabindex="-1">
+            <div class="page-heading"><div><h1>@Model.Title</h1><p id="page-description"></p></div><div id="page-actions"></div></div>
+            <div class="demo-notice"><span data-icon="info"></span><span>@(Model.Demo ? "You’re exploring a UI preview. All databases and results are sample data." : "Connections belong to this browser session. Credentials expire after two hours or a server restart.")</span><span class="notice-tag">@(Model.Demo ? "No live connections" : "Read & generate only")</span></div>
+            <div id="tool-content"></div>
+            <noscript><p class="empty-state">Enable JavaScript to interact with this demo.</p></noscript>
+            <footer class="workspace-footer"><span><i class="live-dot"></i> @(Model.Demo ? "Sample workspace ready" : "Session workspace")</span><span>SQL Server · MVC · .NET 10</span></footer>
+        </main>
+    </div>
+</div>
+<dialog id="connection-dialog" aria-labelledby="connection-title">
+    <form id="connection-form">
+        <div class="dialog-heading"><div><h2 id="connection-title">Add a demo connection</h2><p>Try the connection setup workflow.</p></div><button type="button" class="icon-button" data-close aria-label="Close dialog">✕</button></div>
+        <div class="inline-note">Preview only. Use fictitious credentials; no connection is made and passwords are discarded.</div>
+        <label>Connection name<input name="name" required maxlength="60" placeholder="e.g. Reporting sandbox" /></label>
+        <label>Connection string<textarea name="connection" rows="3" required placeholder="Server=sql-demo;Database=Commerce;User Id=demo;Password=demo;"></textarea></label>
+        <label>Environment<select name="environment"><option>Development</option><option>Staging</option><option>Production</option></select></label>
+        <p id="connection-feedback" role="status"></p>
+        <div class="dialog-actions"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Add demo connection</button></div>
+    </form>
+</dialog>
+<dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-heading"><h2 id="help-title">Your workbench preview</h2><button class="icon-button" data-close aria-label="Close dialog">✕</button></div><p>Explore two sample Commerce databases. Change comparison settings, inspect differences, and download SQL files from Schema scripts or INSERT generator.</p><p>Added connection labels stay in this browser tab. Credentials are never saved or sent. The query editor supports the provided sample queries only.</p><button class="button primary" data-close>Got it</button></dialog>
+<div id="toast" role="status" aria-live="polite"></div>

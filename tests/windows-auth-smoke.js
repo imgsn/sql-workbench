@@ -1,0 +1,32 @@
+async page => {
+const check=(v,m)=>{if(!v)throw new Error(m);};
+const idle=()=>page.waitForFunction(()=>document.querySelector('#tool-content')?.getAttribute('aria-busy')!=='true');
+await page.goto('http://localhost:5180/?tool=connections');await idle();
+await page.locator('#add-live').click();
+await page.locator('#input-method').selectOption('fields');
+await page.locator('#authentication').selectOption('windows');
+check(!await page.locator('#sql-credentials').isVisible(),'SQL credentials must hide for Windows authentication');
+check(await page.locator('#windows-identity-note').isVisible(),'Windows process identity explanation');
+await page.getByLabel('Connection name',{exact:true}).fill('Windows authentication check');
+await page.getByLabel('Server',{exact:true}).fill('.');
+await page.getByLabel('Database',{exact:true}).fill('Taiqz_backup');
+await page.getByLabel('Encrypt connection',{exact:true}).uncheck();
+await page.getByRole('button',{name:'Test & connect',exact:true}).click();
+await page.locator('#connection-dialog').waitFor({state:'hidden'});await idle();
+check(await page.getByRole('heading',{name:'Windows authentication check',exact:true}).isVisible(),'Windows form connects to requested database');
+const card=page.locator('.connection-card').filter({has:page.getByRole('heading',{name:'Windows authentication check',exact:true})});
+await card.getByRole('button',{name:'Disconnect',exact:true}).click();await idle();
+await page.locator('#add-live').click();
+await page.getByLabel('Connection name',{exact:true}).fill('Pasted Windows connection check');
+await page.getByLabel('Connection string',{exact:true}).fill('data source=.;initial catalog=Taiqz_backup;MultipleActiveResultSets=True;App=EntityFramework;Encrypt=False;Integrated Security=true;pooling=true; Max Pool Size=500');
+await page.getByRole('button',{name:'Test & connect',exact:true}).click();
+await page.locator('#connection-dialog').waitFor({state:'hidden'});await idle();
+check(await page.getByRole('heading',{name:'Pasted Windows connection check',exact:true}).isVisible(),'Exact supplied connection string connects');
+const pasted=page.locator('.connection-card').filter({has:page.getByRole('heading',{name:'Pasted Windows connection check',exact:true})});
+await pasted.getByRole('button',{name:'Disconnect',exact:true}).click();await idle();
+await page.locator('#add-live').click();await page.locator('#input-method').selectOption('fields');
+await page.locator('#authentication').selectOption('sql');
+check(await page.locator('#sql-credentials').isVisible(),'SQL authentication remains available');
+await page.getByRole('button',{name:'Cancel',exact:true}).click();
+return 'PASS: Windows form, exact pasted string against Taiqz_backup (connection/permission check only), SQL-auth toggle, and disconnect.';
+}

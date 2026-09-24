@@ -1,0 +1,12 @@
+bin/
+obj/
+publish/
+.playwright-cli/
+*.log
+preview-*.png
+.vs/
+App_Data/
+tests/.browser-fixture.json
+tests/.live-smoke.js
+.cr/
+*.csproj.user
