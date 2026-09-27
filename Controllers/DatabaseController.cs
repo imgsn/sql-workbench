@@ -23,7 +23,17 @@ public sealed class DatabaseController(ConnectionVault vault, SqlDatabaseService
         if (string.IsNullOrWhiteSpace(input.Name)) throw new WorkbenchException("Connection name is required.");
         var normalized = vault.Normalize(input);
         var version = await database.TestAsync(normalized, token);
-        return Ok(vault.Add(Owner, input, normalized, version));
+        var info = vault.Add(Owner, input, normalized, version);
+        return Ok(input.Remember ? vault.Remember(info, normalized) : info);
+    }
+    [HttpPost("connections/restore")]
+    public async Task<IActionResult> RestoreConnection(RestoreConnectionInput input, CancellationToken token)
+    {
+        var recalled = vault.Recall(input.Token);
+        // Re-normalize so allowlist and authentication policy changes apply to remembered connections.
+        var normalized = vault.Normalize(recalled);
+        var version = await database.TestAsync(normalized, token);
+        return Ok(vault.Add(Owner, recalled, normalized, version));
     }
     [HttpDelete("connections/{id}")]
     public IActionResult RemoveConnection(string id) { vault.Remove(Owner, id); return NoContent(); }
@@ -39,7 +49,7 @@ public sealed class DatabaseController(ConnectionVault vault, SqlDatabaseService
     {
         var source = await database.SnapshotAsync(Owner, input.Source, token);
         var target = await database.SnapshotAsync(Owner, input.Target, token);
-        return Ok(new { objects = ComparisonService.CompareSchemas(source, target, input), sourceReadAt = source.ReadAt, targetReadAt = target.ReadAt, warnings = source.Warnings });
+        return Ok(new { objects = ComparisonService.CompareSchemas(source, target, input), fingerprint = SchemaMigrationService.Fingerprint(source, target, input), sourceReadAt = source.ReadAt, targetReadAt = target.ReadAt, warnings = source.Warnings.Concat(target.Warnings).Distinct() });
     }
     [HttpPost("compare/data")]
     public async Task<IActionResult> CompareData(DataCompareInput input, CancellationToken token) => Ok(await comparison.CompareDataAsync(Owner, input, token));
@@ -52,6 +62,14 @@ public sealed class DatabaseController(ConnectionVault vault, SqlDatabaseService
 
     [HttpPost("scripts/inserts")]
     public async Task<IActionResult> InsertScript(InsertInput input, CancellationToken token) => Ok(await scripts.InsertsAsync(Owner, input, token));
+
+    [HttpPost("scripts/differences")]
+    public async Task<IActionResult> DifferenceScript(SchemaMigrationInput input, CancellationToken token) =>
+        Ok(await services.GetRequiredService<SchemaMigrationService>().GenerateAsync(Owner, input, token));
+
+    [HttpPost("scripts/data-differences")]
+    public async Task<IActionResult> DataDifferenceScript(DataDifferenceScriptInput input, CancellationToken token) =>
+        Ok(await services.GetRequiredService<DataDifferenceScriptService>().GenerateAsync(Owner, input, token));
 
     [HttpGet("profiles")]
     public async Task<IActionResult> Profiles(CancellationToken token)

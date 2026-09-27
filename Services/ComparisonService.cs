@@ -47,16 +47,20 @@ public sealed class ComparisonService(SqlDatabaseService database)
         return results;
     }
     public async Task<DataComparison> CompareDataAsync(string owner, DataCompareInput input, CancellationToken token)
+        => (await ReadDataAsync(owner, input, token)).Result;
+    public async Task<DataRead> ReadDataAsync(string owner, DataCompareInput input, CancellationToken token)
     {
         if (input.Keys.Count == 0 || input.Columns.Count == 0) throw new WorkbenchException("Select at least one matching key and comparison column.");
         ValidateMappings(input.Keys); ValidateMappings(input.Columns);
+        ValidateMappings(input.Keys.Concat(input.Columns).Distinct().ToList());
         var source = await database.SnapshotAsync(owner, input.Source, token);
         var target = await database.SnapshotAsync(owner, input.Target, token);
         var a = source.Objects.Find(o => o.Id == input.SourceTable && o.Kind == "Table") ?? throw new WorkbenchException("Source table not found.");
         var b = target.Objects.Find(o => o.Id == input.TargetTable && o.Kind == "Table") ?? throw new WorkbenchException("Target table not found.");
         var sourceRows = await database.TableRowsAsync(owner, input.Source, a, input.Keys.Concat(input.Columns).Select(c => c.Source), input.SourceFilter, token);
         var targetRows = await database.TableRowsAsync(owner, input.Target, b, input.Keys.Concat(input.Columns).Select(c => c.Target), input.TargetFilter, token);
-        return CompareRows(sourceRows, targetRows, input);
+        var read = new DataRead(target.Database, a, b, sourceRows, targetRows, CompareRows(sourceRows, targetRows, input));
+        return read with { Result = read.Result with { Fingerprint = DataDifferenceScriptService.Fingerprint(read, input) } };
     }
     public static DataComparison CompareRows(QueryResult a, QueryResult b, DataCompareInput input)
     {
@@ -91,7 +95,7 @@ public sealed class ComparisonService(SqlDatabaseService database)
             return map;
         }
         var leftRows = Build(a, true); var rightRows = Build(b, false); var rows = new List<RowDifference>();
-        foreach (var key in leftRows.Keys.Union(rightRows.Keys))
+        foreach (var key in leftRows.Keys.Union(rightRows.Keys).Order(StringComparer.Ordinal))
         {
             leftRows.TryGetValue(key, out var left); rightRows.TryGetValue(key, out var right);
             var changed = new List<string>();
@@ -103,7 +107,9 @@ public sealed class ComparisonService(SqlDatabaseService database)
             var values = input.Keys.Select(k => left != null ? left[Index(a, k.Source)] : right![Index(b, k.Target)]).ToArray();
             rows.Add(new(values, left == null ? "target" : right == null ? "source" : changed.Count > 0 ? "changed" : "same",
                 left == null ? null : input.Columns.Select(c => left[Index(a, c.Source)]).ToArray(),
-                right == null ? null : input.Columns.Select(c => right[Index(b, c.Target)]).ToArray(), changed.ToArray()));
+                right == null ? null : input.Columns.Select(c => right[Index(b, c.Target)]).ToArray(), changed.ToArray(),
+                left == null ? null : input.Keys.Select(k => left[Index(a, k.Source)]).ToArray(),
+                right == null ? null : input.Keys.Select(k => right[Index(b, k.Target)]).ToArray()));
         }
         return new(input.Columns, rows, a.ReadAt, b.ReadAt);
     }

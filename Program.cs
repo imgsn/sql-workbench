@@ -7,7 +7,8 @@ using Workbench.Models;
 using Workbench.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-// Cookie keys survive restarts; session contents and database credentials remain memory-only.
+// Keys survive restarts: cookies and browser-held remembered-connection tokens stay readable.
+// Session contents and active credentials remain memory-only.
 var keyPath = builder.Configuration["DataProtection:KeysPath"];
 if (string.IsNullOrWhiteSpace(keyPath))
     keyPath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtectionKeys");
@@ -23,6 +24,7 @@ builder.Services.AddOptions<WorkbenchOptions>().Bind(builder.Configuration.GetSe
     .Validate(o => o.MaxRows is >= 1 and <= 50000, "MaxRows must be between 1 and 50000.")
     .Validate(o => o.CommandTimeoutSeconds is >= 1 and <= 300, "Command timeout must be between 1 and 300 seconds.")
     .Validate(o => o.ConnectionLifetimeMinutes is >= 1 and <= 480, "Connection lifetime must be between 1 and 480 minutes.")
+    .Validate(o => o.RememberedConnectionDays is >= 1 and <= 365, "Remembered connection days must be between 1 and 365.")
     .ValidateOnStart();
 builder.Services.AddControllersWithViews();
 builder.Services.AddDistributedMemoryCache();
@@ -43,6 +45,8 @@ builder.Services.AddSingleton<ConnectionVault>();
 builder.Services.AddScoped<SqlDatabaseService>();
 builder.Services.AddScoped<ComparisonService>();
 builder.Services.AddScoped<ScriptService>();
+builder.Services.AddScoped<SchemaMigrationService>();
+builder.Services.AddScoped<DataDifferenceScriptService>();
 builder.Services.AddDbContext<WorkbenchDbContext>((services, options) => options.UseSqlServer(
     services.GetRequiredService<IConfiguration>().GetConnectionString("Workbench")
     ?? throw new WorkbenchException("The Workbench application database is not configured.", 409)));

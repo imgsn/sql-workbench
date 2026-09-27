@@ -173,9 +173,30 @@ values are excluded from application logs. Request concurrency is bounded.
 
 ## Validation
 
+### Export data differences
+
+After running **Data compare**, use **Export data differences** to select rows, preview their SQL, and download `data-differences.sql`. Source-only rows generate INSERT, changed rows generate UPDATE of the changed mapped columns, and target-only rows generate DELETE. The target database/table and mapped target column names are used throughout. The app only reads metadata/data and never executes the generated statements.
+
+Select all mandatory destination columns for inserts, or provide destination defaults. Enable **Preserve identity values** when selected inserts map an identity column. Computed/generated columns are omitted from inserts and cannot be updated. Matching keys cannot be changed by this export. Composite keys, NULL values, Unicode, binary data and exact decimal/bigint values are supported. Text/ntext/image/XML matching keys are rejected because they do not support ordinary SQL equality.
+
+The server rereads the comparison and rejects exports if compared data, table metadata or settings changed. SQL contains target-key uniqueness and original-value guards, a transaction, explicit rollback on conflict, and identity cleanup. String guards detect case and trailing-space changes. Matching rules may pair differently formatted source/target keys; updates/deletes use the original target key and preserve it. Export selection is independent of the results display filter.
+
+Review filters, unselected/unmapped columns, conversions, foreign keys, triggers/cascades and operation ordering before using a file outside Workbench. Reads are separate and are not a cross-database snapshot. A draft is not an automatic deployment. Execute only in a fresh session outside an existing transaction. The generated TRY/CATCH explicitly rolls back because [RAISERROR does not honor XACT_ABORT](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/raiserror-transact-sql?view=sql-server-ver17).
+
+### Schema difference drafts
+
+Run **Schema compare**, select changed objects in **Generate SQL from differences**, and choose **Generate migration draft**. The direction is always source → target: statements change the target to match the source. Review the risk table, then copy or download `schema-differences.sql`. Demo mode offers the same workflow using fictitious data.
+
+Supported drafts include ordinary column additions/removals, type/nullability/collation changes, default replacements, whole-object drops, and SMO creation scripts for source-only objects. Narrow comparison modes preserve target column settings outside their scope. Before returning a live draft, the server checks both schemas against the comparison fingerprint; changed metadata requires a new comparison.
+
+Drafts explicitly mark **potential data loss** and **manual SQL required**. Existing module definitions, keys/indexes/constraints, special columns, and creation across different mapped schemas require manual work. Dependencies, cyclic references, data conversions, and compatibility with older target servers require review. An incomplete draft is labeled in both the preview and downloaded file; it is not a complete synchronization script. No generated SQL is executed by the app.
+
+SQL Server's column/default rules are documented in [ALTER TABLE column constraints](https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-table-column-constraint-transact-sql?view=sql-server-ver17).
+
 ```powershell
 dotnet build Workbench.slnx -c Release
 node --check wwwroot/js/live.js
+dotnet run --project tests/Integration/Integration.csproj -c Release -- --migration-only
 # Creates and cleans up only uniquely named Workbench_Test_* databases and login.
 # Default admin connection is localhost with Windows integrated authentication.
 # Override with WORKBENCH_TEST_ADMIN when needed.
@@ -193,6 +214,8 @@ Browser checks (local app running):
 ```powershell
 playwright-cli -s=workbench open http://localhost:5180 --browser=msedge
 playwright-cli -s=workbench --raw run-code --filename=tests/ui-smoke.js
+playwright-cli -s=workbench --raw run-code --filename=tests/migration-smoke.js
+playwright-cli -s=workbench --raw run-code --filename=tests/data-export-smoke.js
 ./tests/BrowserFixture.ps1 setup
 try {
     playwright-cli -s=workbench --raw run-code --filename=tests/.live-smoke.js

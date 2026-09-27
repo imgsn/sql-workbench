@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
@@ -13,7 +15,24 @@ public sealed class ConnectionVault(IDataProtectionProvider protection, IOptions
     private sealed record Entry(string Owner, string Secret, ConnectionInfo Info);
     private readonly ConcurrentDictionary<string, Entry> entries = new();
     private readonly IDataProtector protector = protection.CreateProtector("Workbench.Connections.v1");
+    // Remembered connections are held by the browser as opaque tokens; the server stores nothing.
+    private readonly ITimeLimitedDataProtector remembered = protection.CreateProtector("Workbench.RecentConnections.v1").ToTimeLimitedDataProtector();
     private readonly WorkbenchOptions options = settings.Value;
+
+    public ConnectionInfo Remember(ConnectionInfo info, string normalized)
+    {
+        var expires = DateTimeOffset.UtcNow.AddDays(options.RememberedConnectionDays);
+        var payload = JsonSerializer.Serialize(new RememberedConnection(info.Name, info.Environment, normalized));
+        return info with { RememberToken = remembered.Protect(payload, expires), RememberExpiresAt = expires };
+    }
+    public ConnectionInput Recall(string token)
+    {
+        RememberedConnection? saved;
+        try { saved = JsonSerializer.Deserialize<RememberedConnection>(remembered.Unprotect(token)); }
+        catch (Exception e) when (e is CryptographicException or JsonException or FormatException) { saved = null; }
+        if (saved == null) throw new WorkbenchException("This saved connection has expired or can no longer be read. Add it again.", 410);
+        return new ConnectionInput { Name = saved.Name, Environment = saved.Environment, ConnectionString = saved.ConnectionString };
+    }
 
     public string Normalize(ConnectionInput input)
     {

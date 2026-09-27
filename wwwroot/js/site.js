@@ -77,6 +77,7 @@ function summary(items, noun) { return `<div class="result-summary"><div class="
 function tabs(filter) { return `<div class="tabs" aria-label="Filter results">${[['all','All results'],...Object.entries(labels)].map(([id,label])=>`<button class="tab ${filter===id?'active':''}" data-filter="${id}" aria-pressed="${filter===id}">${label}</button>`).join('')}</div>`; }
 let schemaResults = [], schemaFilter='all', schemaSearch='', selectedObject='dbo.Customers';
 function schemaCompare() {
+ document.querySelector('.migration-panel')?.remove();
  const source=demo.schemas[$('#source').value], target=demo.schemas[$('#target').value], scope=$('#scope').value, mode=$('#mode').value;
  const names=[...new Set([...Object.keys(source),...Object.keys(target)])].sort();
  schemaResults=names.filter(name=>scope==='all'||(scope==='selected'?name===$('#table-scope').value:name.startsWith(scope+'.'))).map(name=>{
@@ -94,6 +95,7 @@ function schemaCompare() {
  renderSchemaResults();
 }
 function renderSchemaResults() {
+ const migrationPanel=document.querySelector('.migration-panel');
  const visible=schemaResults.filter(x=>(schemaFilter==='all'||x.status===schemaFilter)&&x.name.toLowerCase().includes(schemaSearch.toLowerCase()));
  $('#results').innerHTML=summary(schemaResults,'Tables')+`<section class="panel"><div class="panel-header"><div><h2>Comparison results <span class="filter-count">${schemaResults.filter(x=>x.status!=='same').length} differences</span></h2><p>Source and target are compared by schema and table name.</p></div><button id="export-report" class="button small">${icon('download')}Export report</button></div><div class="result-toolbar">${tabs(schemaFilter)}<input id="search-results" class="search" placeholder="Search objects…" aria-label="Search objects" value="${esc(schemaSearch)}" /></div><div class="table-wrap"><table><thead><tr><th>Object name</th><th>Type</th><th>Status</th><th>What changed</th><th></th></tr></thead><tbody>${visible.map(x=>`<tr><td class="object-name">${icon('table')}${esc(x.name)}</td><td class="muted">Table</td><td>${badge(x.status)}</td><td class="schema-changes-cell">${window.schemaChanges.render(x.status,x.differences.map(d=>({column:d.column,property:d.property,source:d.a,target:d.b})))}</td><td><button class="detail-link" data-detail="${esc(x.name)}">Inspect ${icon('arrow')}</button></td></tr>`).join('')}</tbody></table>${!visible.length?'<div class="empty-state">No matching objects. Try another filter or search.</div>':''}</div><div class="table-footer"><span>Showing ${visible.length} of ${schemaResults.length} tables</span><div class="legend"><span><i></i>Changed definition</span><span><i></i>Source only</span><span><i></i>Target only</span></div></div><div id="schema-detail"></div></section>`;
  document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{schemaFilter=b.dataset.filter;renderSchemaResults();});
@@ -101,6 +103,8 @@ function renderSchemaResults() {
  document.querySelectorAll('[data-detail]').forEach(b=>b.onclick=()=>{selectedObject=b.dataset.detail;renderDetail();});
  $('#export-report').onclick=()=>download('schema-comparison.csv','Object,Status,Differences\r\n'+visible.map(x=>`${x.name},${labels[x.status]},${x.differences.length}`).join('\r\n'),'text/csv');
  if(visible.some(x=>x.name===selectedObject)) renderDetail();
+ if(migrationPanel) $('#results').append(migrationPanel);
+ else window.schemaMigration.mount({host:$('#results'),items:schemaResults,source:$('#source').selectedOptions[0].textContent,target:$('#target').selectedOptions[0].textContent,demo:true,generate:selected=>window.schemaMigration.demo(schemaResults,selected,$('#target').selectedOptions[0].textContent)});
 }
 function renderDetail() {
  const x=schemaResults.find(x=>x.name===selectedObject);if(!x)return;
@@ -119,6 +123,8 @@ function dataPage() {
  wirePair(renderData);$('#match-key').onchange=renderData;$('#ignore-city').onchange=renderData;renderData();
 }
 function renderData() {
+ const exportContext=JSON.stringify([$('#source').value,$('#target').value,$('#match-key').value,$('#ignore-city').checked]);
+ const previousExport=document.querySelector('.migration-panel');
  const a=demo.rows[$('#source').value],b=demo.rows[$('#target').value],key=$('#match-key').value;
  const cols=['Name','Email','City','IsActive'];const compareCols=cols.filter(c=>!($('#ignore-city').checked&&c==='City'));
  const keys=[...new Set([...a.map(r=>r[key]),...b.map(r=>r[key])])].sort();
@@ -127,6 +133,8 @@ function renderData() {
  $('#results').innerHTML=summary(rows,'Rows')+`<section class="panel"><div class="panel-header"><div><h2>Row differences <span class="filter-count">dbo.Customers</span></h2><p>Changed cells show source above target. This preview contains 7 rows per database.</p></div><button id="export-data" class="button small">${icon('download')}Export differences</button></div><div class="result-toolbar">${tabs(dataFilter)}</div><div class="table-wrap"><table><thead><tr><th>${key}</th><th>Status</th>${cols.filter(c=>c!==key).map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${visible.map(r=>`<tr><td class="mono">${esc(r.key)}</td><td>${badge(r.status)}</td>${cols.filter(c=>c!==key).map(c=>`<td class="comparison-cell">${r.a&&r.b&&r.a[c]!==r.b[c]&&compareCols.includes(c)?`<span class="change-new">${esc(display(r.a[c]))}</span><small><span class="change-old">${esc(display(r.b[c]))}</span></small>`:esc(display((r.a||r.b)[c]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${!visible.length?'<div class="empty-state">No rows match this filter.</div>':''}<div class="table-footer"><span>Showing ${visible.length} of ${rows.length} matched keys</span><span>Source values in green · Target values in red</span></div></section>`;
  document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{dataFilter=b.dataset.filter;renderData();});
  $('#export-data').onclick=()=>download('data-differences.json',JSON.stringify(rows.filter(r=>r.status!=='same'),null,2),'application/json');
+ if(previousExport?.dataset.context===exportContext) $('#results').append(previousExport);
+ else {window.schemaMigration.mount({host:$('#results'),items:rows.map((r,i)=>({name:'Row '+(i+1)+' · '+r.key,kind:'Row',status:r.status})),source:$('#source').selectedOptions[0].textContent,target:$('#target').selectedOptions[0].textContent,dataMode:true,demo:true,generate:selected=>window.schemaMigration.demoData(rows,selected,key,compareCols)});document.querySelector('.migration-panel').dataset.context=exportContext;}
 }
 function display(v) {return v===null?'NULL':typeof v==='boolean'?(v?'1':'0'):String(v);}
 function readAdded() {try {const data=JSON.parse(sessionStorage.getItem('workbench-demo-connections')||'[]');return Array.isArray(data)?data.filter(x=>x&&typeof x.name==='string'&&typeof x.id==='string'):[];}catch{return [];}}

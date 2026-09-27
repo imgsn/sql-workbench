@@ -14,8 +14,15 @@ public sealed class ConnectionInput
     public bool Encrypt { get; set; } = true;
     public bool TrustServerCertificate { get; set; }
     [StringLength(30)] public string Environment { get; set; } = "Development";
+    public bool Remember { get; set; }
 }
-public record ConnectionInfo(string Id, string Name, string Server, string Database, string Environment, string Version, DateTimeOffset ExpiresAt);
+public record ConnectionInfo(string Id, string Name, string Server, string Database, string Environment, string Version, DateTimeOffset ExpiresAt,
+    string? RememberToken = null, DateTimeOffset? RememberExpiresAt = null);
+public sealed class RestoreConnectionInput
+{
+    [Required, StringLength(16384)] public string Token { get; set; } = "";
+}
+public record RememberedConnection(string Name, string Environment, string ConnectionString);
 public record DatabaseColumn(string Name, string Type, bool Nullable, bool Identity, bool Computed, bool Generated, bool PrimaryKey, string? Default, string? Collation, string? ComputedDefinition);
 public sealed class DatabaseObject
 {
@@ -55,8 +62,16 @@ public sealed class DataCompareInput
 }
 public record ResultColumn(string Name, string Type);
 public record QueryResult(List<ResultColumn> Columns, List<object?[]> Rows, DateTimeOffset ReadAt);
-public record RowDifference(object?[] Key, string Status, object?[]? Source, object?[]? Target, string[] ChangedColumns);
-public record DataComparison(List<ColumnMapping> Columns, List<RowDifference> Rows, DateTimeOffset SourceReadAt, DateTimeOffset TargetReadAt);
+public record RowDifference(object?[] Key, string Status, object?[]? Source, object?[]? Target, string[] ChangedColumns, object?[]? SourceKey = null, object?[]? TargetKey = null);
+public record DataComparison(List<ColumnMapping> Columns, List<RowDifference> Rows, DateTimeOffset SourceReadAt, DateTimeOffset TargetReadAt, string? Fingerprint = null);
+public record DataRead(string TargetDatabase, DatabaseObject SourceTable, DatabaseObject TargetTable, QueryResult SourceRows, QueryResult TargetRows, DataComparison Result);
+public sealed class DataDifferenceScriptInput
+{
+    [Required] public DataCompareInput Comparison { get; set; } = new();
+    [Required] public string Fingerprint { get; set; } = "";
+    public List<int> SelectedRows { get; set; } = [];
+    public bool IncludeIdentity { get; set; }
+}
 public sealed class SchemaScriptInput
 {
     [Required] public string Connection { get; set; } = "";
@@ -79,6 +94,14 @@ public sealed class InsertInput
     [Range(1, 1000)] public int BatchSize { get; set; } = 100;
 }
 public record ScriptResult(string Sql, string Filename, int ObjectCount, string[] Warnings);
+public sealed class SchemaMigrationInput
+{
+    [Required] public SchemaCompareInput Comparison { get; set; } = new();
+    [Required] public string Fingerprint { get; set; } = "";
+    public List<int> SelectedObjects { get; set; } = [];
+}
+public record MigrationStep(string Object, string Change, string Risk, string Sql, string Note);
+public record MigrationResult(string Sql, string Filename, int ObjectCount, string[] Warnings, List<MigrationStep> Steps);
 public sealed class QueryInput
 {
     [Required] public string Connection { get; set; } = "";
@@ -93,6 +116,7 @@ public sealed class WorkbenchOptions
     public int MaxRows { get; set; } = 5000;
     public int CommandTimeoutSeconds { get; set; } = 30;
     public int ConnectionLifetimeMinutes { get; set; } = 120;
+    public int RememberedConnectionDays { get; set; } = 30;
     public string[] AllowedServers { get; set; } = [];
     public bool AllowWindowsAuthentication { get; set; } = true;
 }

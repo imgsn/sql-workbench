@@ -24,6 +24,9 @@ internal static class TestRunner
     }
     public static async Task Main(string[] args)
     {
+        MigrationChecks.Run();
+        DataExportChecks.Run();
+        if (args.Contains("--migration-only")) return;
         if (args.Contains("--protection-only"))
         {
             await ProtectionChecks.RunAsync(FindRoot());
@@ -151,6 +154,13 @@ internal static class TestRunner
             var b = await Post("connections", new { name = "Target", connectionString = ReaderString(names[1]) });
             var aid = a.GetProperty("id").GetString()!; var bid = b.GetProperty("id").GetString()!;
             Check(!a.ToString().Contains(password), "Connection response omits secret");
+            var remembered = await Post("connections", new { name = "Remembered", connectionString = ReaderString(names[0]), remember = true });
+            var rememberToken = remembered.GetProperty("rememberToken").GetString()!;
+            Check(!remembered.ToString().Contains(password), "Remember token does not expose the password");
+            var restored = await Post("connections/restore", new { token = rememberToken });
+            Check(restored.GetProperty("database").GetString() == names[0] && restored.GetProperty("name").GetString() == "Remembered", "Remembered connection restores");
+            await Post("connections/restore", new { token = rememberToken[..^8] + "AAAAAAAA" }, 410);
+            foreach (var entry in new[] { remembered, restored }) await client.DeleteAsync("/api/connections/" + entry.GetProperty("id").GetString());
             var snapshot = await client.GetFromJsonAsync<DatabaseSnapshot>("/api/connections/" + aid + "/schema") ?? throw new Exception("No snapshot");
             var customers = snapshot.Objects.Single(o => o.Name == "Customers");
             Check(customers.Columns.Single(c => c.Name == "Amount").Type == "decimal(38,8)", "Precise schema type");
@@ -160,6 +170,15 @@ internal static class TestRunner
             var targetCustomers = targetSnapshot.Objects.Single(o => o.Name == "Customers");
             var comparison = await Post("compare/schema", new { source = aid, target = bid, mode = "full" });
             Check(comparison.GetProperty("objects").EnumerateArray().Any(o => o.GetProperty("name").GetString() == "dbo.Customers" && o.GetProperty("status").GetString() == "changed"), "Live schema difference");
+            var selectedChanges = comparison.GetProperty("objects").EnumerateArray().Select((o, i) => (o, i)).Where(x => x.o.GetProperty("status").GetString() != "same").Select(x => x.i).ToArray();
+            var migrationRequest = new { comparison = new { source = aid, target = bid, mode = "full" }, fingerprint = comparison.GetProperty("fingerprint").GetString(), selectedObjects = selectedChanges };
+            var migration = await Post("scripts/differences", migrationRequest);
+            Check(migration.GetProperty("sql").GetString()!.Contains("ALTER COLUMN [Name] nvarchar(100)"), "Live migration direction");
+            Check(migration.GetProperty("sql").GetString()!.Contains("CREATE TABLE [audit].[Events]"), "SMO scripts missing source table");
+            var untouched = await client.GetFromJsonAsync<DatabaseSnapshot>("/api/connections/" + bid + "/schema");
+            Check(untouched!.Objects.Single(o => o.Name == "Customers").Columns.Single(c => c.Name == "Name").Type == "nvarchar(80)", "Generation does not apply changes");
+            await Post("scripts/differences", new { migrationRequest.comparison, fingerprint = "outdated", selectedObjects = selectedChanges }, 409);
+            await Post("scripts/differences", new { migrationRequest.comparison, migrationRequest.fingerprint, selectedObjects = Array.Empty<int>() }, 400);
             var mapping = new[] { new ColumnMapping("Name", "Name"), new ColumnMapping("City", "City"), new ColumnMapping("Amount", "Amount") };
             var data = await Post("compare/data", new { source = aid, target = bid, sourceTable = customers.Id, targetTable = targetCustomers.Id, keys = new[] { new ColumnMapping("CustomerId", "CustomerId") }, columns = mapping });
             var statuses = data.GetProperty("rows").EnumerateArray().Select(r => r.GetProperty("status").GetString()).ToList();
@@ -193,6 +212,50 @@ internal static class TestRunner
                 cmd.CommandText = "SELECT CONVERT(nvarchar(100),Amount) FROM dbo.Customers WHERE CustomerId=1";
                 Check((string)(await cmd.ExecuteScalarAsync())! == "123456789012345678901234567890.12345678", "Decimal roundtrip");
             }
+            // Exercise the draft in disposable fixtures only, outside the application API.
+            await Execute(InDatabase(names[0]), "CREATE TABLE dbo.MigrationProbe (Label nvarchar(100) NULL, NewValue int NOT NULL DEFAULT(7), Flag int NULL DEFAULT(1));");
+            await Execute(InDatabase(names[1]), "CREATE TABLE dbo.MigrationProbe (Label nvarchar(20) NOT NULL, OldValue int NULL DEFAULT(0), Flag int NULL DEFAULT(0)); INSERT dbo.MigrationProbe(Label) VALUES(N'kept');");
+            var probeSource = await client.GetFromJsonAsync<DatabaseSnapshot>("/api/connections/" + aid + "/schema");
+            var probeInput = new SchemaCompareInput { Source = aid, Target = bid, ObjectIds = [probeSource!.Objects.Single(o => o.Name == "MigrationProbe").Id] };
+            var probeComparison = await Post("compare/schema", probeInput);
+            var probeRequest = new { comparison = probeInput, fingerprint = probeComparison.GetProperty("fingerprint").GetString(), selectedObjects = new[] { 0 } };
+            var probeDraft = await Post("scripts/differences", probeRequest);
+            await Execute(InDatabase(names[1]), probeDraft.GetProperty("sql").GetString()!);
+            var probeAfter = await Post("compare/schema", probeInput);
+            Check(probeAfter.GetProperty("objects")[0].GetProperty("status").GetString() == "same", "Migration SQL roundtrip matches source columns/defaults");
+            await using (var verify = new SqlConnection(InDatabase(names[1])))
+            {
+                await verify.OpenAsync(); using var cmd = new SqlCommand("SELECT NewValue FROM dbo.MigrationProbe WHERE Label=N'kept'", verify);
+                Check(Convert.ToInt32(await cmd.ExecuteScalarAsync()) == 7, "Migration preserves existing rows and backfills NOT NULL default");
+            }
+            await Post("scripts/differences", probeRequest, 409);
+            await Execute(InDatabase(names[0]), "CREATE TABLE dbo.DataExportProbe(Id int IDENTITY NOT NULL, Tenant nvarchar(20) NOT NULL, Name nvarchar(100) NULL, Amount decimal(38,8) NOT NULL, PRIMARY KEY(Id,Tenant)); SET IDENTITY_INSERT dbo.DataExportProbe ON; INSERT dbo.DataExportProbe(Id,Tenant,Name,Amount) VALUES(1,N' acme ',N'O''Brien',123456789012345678901234567890.12345678),(2,N'acme',N'Same',2),(3,N'acme',NULL,3); SET IDENTITY_INSERT dbo.DataExportProbe OFF;");
+            await Execute(InDatabase(names[1]), "CREATE TABLE dbo.DataExportProbe(Id int IDENTITY NOT NULL, Tenant nvarchar(20) NOT NULL, Label nvarchar(100) NULL, Amount decimal(38,8) NOT NULL, PRIMARY KEY(Id,Tenant)); SET IDENTITY_INSERT dbo.DataExportProbe ON; INSERT dbo.DataExportProbe(Id,Tenant,Label,Amount) VALUES(1,N'ACME',N'Old',1),(2,N'acme',N'Same',2),(4,N'acme',N'Delete',4); SET IDENTITY_INSERT dbo.DataExportProbe OFF;");
+            var exportA = await client.GetFromJsonAsync<DatabaseSnapshot>("/api/connections/" + aid + "/schema");
+            var exportB = await client.GetFromJsonAsync<DatabaseSnapshot>("/api/connections/" + bid + "/schema");
+            var dataInput = new DataCompareInput { Source = aid, Target = bid, SourceTable = exportA!.Objects.Single(o => o.Name == "DataExportProbe").Id, TargetTable = exportB!.Objects.Single(o => o.Name == "DataExportProbe").Id, Keys = [new("Id", "Id"), new("Tenant", "Tenant")], Columns = [new("Name", "Label"), new("Amount", "Amount")], IgnoreCase = true, TrimWhitespace = true };
+            var dataDiff = await Post("compare/data", dataInput);
+            var selectedRows = dataDiff.GetProperty("rows").EnumerateArray().Select((r,i)=>(r,i)).Where(x=>x.r.GetProperty("status").GetString()!="same").Select(x=>x.i).ToList();
+            var exportRequest = new DataDifferenceScriptInput { Comparison = dataInput, Fingerprint = dataDiff.GetProperty("fingerprint").GetString()!, SelectedRows = selectedRows, IncludeIdentity = true };
+            var dataSql = (await Post("scripts/data-differences", exportRequest)).GetProperty("sql").GetString()!;
+            Check(dataSql.Contains("INSERT INTO") && dataSql.Contains("UPDATE ") && dataSql.Contains("DELETE FROM"), "Live export includes selected INSERT/UPDATE/DELETE");
+            Check((await Post("compare/data", dataInput)).GetProperty("fingerprint").GetString() == exportRequest.Fingerprint, "Export does not execute generated SQL");
+            exportRequest.IncludeIdentity = false;
+            await Post("scripts/data-differences", exportRequest, 422);
+            exportRequest.IncludeIdentity = true;
+            await Execute(InDatabase(names[1]), "UPDATE dbo.DataExportProbe SET Label=N'Changed after export' WHERE Id=4;");
+            await Post("scripts/data-differences", exportRequest, 409);
+            try { await Execute(InDatabase(names[1]), dataSql); throw new Exception("Conflicting exported script succeeded"); }
+            catch (SqlException ex) when (ex.Number == 50000) { Check(true, "Exported SQL detects target drift"); }
+            await using (var verify = new SqlConnection(InDatabase(names[1])))
+            {
+                await verify.OpenAsync(); using var cmd = new SqlCommand("SELECT COUNT(*) FROM dbo.DataExportProbe WHERE (Id=1 AND Label=N'Old') OR Id=3", verify);
+                Check(Convert.ToInt32(await cmd.ExecuteScalarAsync()) == 1, "Conflict rolls back earlier UPDATE and INSERT");
+            }
+            await Execute(InDatabase(names[1]), "UPDATE dbo.DataExportProbe SET Label=N'Delete' WHERE Id=4;");
+            await Execute(InDatabase(names[1]), dataSql);
+            var synchronized = await Post("compare/data", dataInput);
+            Check(synchronized.GetProperty("rows").EnumerateArray().All(r => r.GetProperty("status").GetString() == "same"), "Data export roundtrip: composite normalized keys, renamed columns, exact decimals, identity INSERT and DELETE");
             var profile = await Post("profiles", new { name = "Integration profile", mode = "types", sourceSchema = "dbo", targetSchema = "dbo" });
             var profiles = await client.GetStringAsync("/api/profiles"); Check(profiles.Contains("Integration profile"), "EF Core persisted shared profile");
             Check((await client.DeleteAsync("/api/profiles/" + profile.GetProperty("id").GetString())).IsSuccessStatusCode, "EF profile removal");
@@ -223,4 +286,3 @@ internal static class TestRunner
         return directory?.FullName ?? throw new Exception("Run tests from the repository root.");
     }
 }
-
