@@ -43,6 +43,7 @@ builder.Services.AddAntiforgery(options => {
 });
 builder.Services.AddSingleton<ConnectionVault>();
 builder.Services.AddScoped<SqlDatabaseService>();
+builder.Services.AddScoped<QueryExecutionService>();
 builder.Services.AddScoped<ComparisonService>();
 builder.Services.AddScoped<ScriptService>();
 builder.Services.AddScoped<SchemaMigrationService>();

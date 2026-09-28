@@ -57,6 +57,10 @@ public sealed class DatabaseController(ConnectionVault vault, SqlDatabaseService
     [HttpPost("query/preview")]
     public async Task<IActionResult> Query(QueryInput input, CancellationToken token) => Ok(await database.QueryAsync(Owner, input.Connection, input.Query, token));
 
+    [HttpPost("query/execute")]
+    public async Task<IActionResult> ExecuteQuery(QueryInput input, CancellationToken token) =>
+        Ok(await services.GetRequiredService<QueryExecutionService>().ExecuteAsync(Owner, input, token));
+
     [HttpPost("scripts/schema")]
     public async Task<IActionResult> SchemaScript(SchemaScriptInput input, CancellationToken token) => Ok(await scripts.SchemaAsync(Owner, input, token));
 

@@ -219,6 +219,6 @@ function insertsPage() {
 $('#help-button').onclick=()=>$('#help-dialog').showModal();
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('dialog').close());
 $('#connection-dialog').addEventListener('close',()=>$('#connection-form').reset());
-({schema:schemaPage,data:dataPage,connections:connectionsPage,explorer:explorerPage,scripts:scriptsPage,inserts:insertsPage}[tool])();
+({schema:schemaPage,data:dataPage,connections:connectionsPage,explorer:explorerPage,scripts:scriptsPage,inserts:insertsPage,query:()=>window.workbenchQueryEditor({connections:demo.connections,demo:true})}[tool])();
 icons();
 })();

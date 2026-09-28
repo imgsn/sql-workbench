@@ -153,6 +153,26 @@ internal static class TestRunner
             }
             var b = await Post("connections", new { name = "Target", connectionString = ReaderString(names[1]) });
             var aid = a.GetProperty("id").GetString()!; var bid = b.GetProperty("id").GetString()!;
+            var queryPage = await client.GetStringAsync("/?tool=query");
+            Check(queryPage.Contains("Query editor") && queryPage.Contains("query-editor.js"), "Query editor route and script");
+            var executionConnection = await Post("connections", new { name = "Execution sandbox", connectionString = InDatabase(names[2]) });
+            var executionId = executionConnection.GetProperty("id").GetString();
+            var execution = await Post("query/execute", new { connection = executionId, query = "CREATE TABLE dbo.ExecutionProbe(Id int, Label nvarchar(100)); INSERT dbo.ExecutionProbe VALUES(1,N'first'),(2,N'second'); UPDATE dbo.ExecutionProbe SET Label=N'changed' WHERE Id=1; DELETE dbo.ExecutionProbe WHERE Id=2; SELECT * FROM dbo.ExecutionProbe; SELECT CAST(9223372036854775807 AS bigint) AS Exact; PRINT N'Finished'; DROP TABLE dbo.ExecutionProbe;" });
+            Check(execution.GetProperty("error").ValueKind == JsonValueKind.Null, "DDL and DML execute successfully");
+            Check(execution.GetProperty("results").GetArrayLength() == 2 && execution.GetProperty("results")[0].GetProperty("rows")[0][1].GetString() == "changed", "Multiple results show persisted DML");
+            Check(execution.GetProperty("results")[1].GetProperty("rows")[0][0].GetString() == "9223372036854775807", "Execution retains bigint precision");
+            Check(execution.GetProperty("affectedRows").GetInt32() == 4 && execution.GetProperty("messages").ToString().Contains("Finished"), "Affected rows and PRINT messages");
+            var limited = await Post("query/execute", new { connection = executionId, query = "SELECT TOP (30) name FROM sys.all_objects; SELECT REPLICATE(CAST(N'x' AS nvarchar(max)),10000) AS LargeCell;" });
+            Check(limited.GetProperty("truncated").GetBoolean() && limited.GetProperty("results")[0].GetProperty("rows").GetArrayLength() == 20, "Query results respect row budget");
+            var largeCell = await Post("query/execute", new { connection = executionId, query = "SELECT REPLICATE(CAST(N'x' AS nvarchar(max)),10000) AS LargeCell;" });
+            Check(largeCell.GetProperty("truncated").GetBoolean() && largeCell.GetProperty("results")[0].GetProperty("rows")[0][0].GetString()!.Length < 8300, "Large text cells are bounded");
+            var deniedWrite = await Post("query/execute", new { connection = aid, query = "DELETE dbo.Customers;" });
+            Check(deniedWrite.GetProperty("error").GetString()!.Contains("229"), "Execution respects login write permissions");
+            var invalidSql = await Post("query/execute", new { connection = executionId, query = "SELEC 1;" });
+            Check(invalidSql.GetProperty("error").GetString()!.Contains("line"), "SQL errors contain line diagnostics");
+            await Post("query/execute", new { connection = executionId, query = " " }, 400);
+            await Post("query/execute", new { connection = "another-session-id", query = "SELECT 1" }, 404);
+            await client.DeleteAsync("/api/connections/" + executionId);
             Check(!a.ToString().Contains(password), "Connection response omits secret");
             var remembered = await Post("connections", new { name = "Remembered", connectionString = ReaderString(names[0]), remember = true });
             var rememberToken = remembered.GetProperty("rememberToken").GetString()!;

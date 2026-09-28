@@ -4,7 +4,27 @@
 
 ASP.NET Core 10 MVC workbench for an internal development team. No sign-in.
 Connect to SQL Server, inspect metadata, compare schemas and rows, and download
-schema or INSERT scripts. The application never applies generated scripts.
+schema or INSERT scripts. Generators only create files; the separate **Query editor**
+executes SQL against the selected database.
+
+## Query editor
+
+Open **Query editor** from the menu, select a connection, enter SQL and click
+**Execute SQL** (or Ctrl+Enter). SELECT, INSERT, UPDATE, DELETE and schema commands
+run using that connection's SQL permissions. The page shows multiple result tables,
+affected rows, PRINT messages, elapsed time and SQL errors. Download the editor text
+as a `.sql` file. Demo mode simulates only the provided sample query.
+
+Each execution opens a new connection. Send one SQL batch without `GO` separators;
+complete explicit transactions within that run. Uncommitted transactions are rolled
+back when the connection closes. Writes may commit immediately, and a later error,
+timeout or cancellation does not undo earlier committed statements. Check database
+state before retrying. Cancellation requests SQL cancellation; it is not a rollback.
+
+The configured command timeout bounds execution. Display is limited to the configured
+row limit across up to 10 result sets and 8 MB, with large text/binary cells truncated.
+Display truncation is indicated and does not limit statement execution. Preview and
+comparison endpoints retain their SELECT-only validation.
 
 ## Run
 
@@ -123,7 +143,7 @@ $env:ConnectionStrings__Workbench='Server=...;Database=WorkbenchSettings;User Id
 ```
 
 Only this configured database receives EF Core profile writes. Schema setup is
-never run automatically, and user-connected databases receive no workbench writes.
+never run automatically. Query editor can write to user-connected databases when the selected SQL login has the required permissions.
 
 ## Hosting
 
@@ -167,17 +187,17 @@ from supported fields, so file attachment, alternate failover hosts,
 and arbitrary connection-string settings cannot be enabled by a pasted value.
 Disconnecting or pruning an expired connection also clears its SqlClient pool.
 
-The SELECT parser rejects writes, multiple statements/batches, SELECT INTO,
+For preview, comparison and INSERT generation, the SELECT parser rejects writes, multiple statements/batches, SELECT INTO,
 sequences, external/cross-database references, variables, and query hints. Use
 read-only database credentials as the database-level enforcement. API mutations
-require an antiforgery token. SQL errors are sanitized; query text and credential
+require an antiforgery token. Query editor permits SQL commands and returns SQL error diagnostics to the requesting session. Other API errors are sanitized; query text and credential
 values are excluded from application logs. Request concurrency is bounded.
 
 ## Validation
 
 ### Export data differences
 
-After running **Data compare**, use **Export data differences** to select rows, preview their SQL, and download `data-differences.sql`. Source-only rows generate INSERT, changed rows generate UPDATE of the changed mapped columns, and target-only rows generate DELETE. The target database/table and mapped target column names are used throughout. The app only reads metadata/data and never executes the generated statements.
+After running **Data compare**, use **Export data differences** to select rows, preview their SQL, and download `data-differences.sql`. Source-only rows generate INSERT, changed rows generate UPDATE of the changed mapped columns, and target-only rows generate DELETE. The target database/table and mapped target column names are used throughout. This generator only reads metadata/data and never executes the generated statements.
 
 Select all mandatory destination columns for inserts, or provide destination defaults. Enable **Preserve identity values** when selected inserts map an identity column. Computed/generated columns are omitted from inserts and cannot be updated. Matching keys cannot be changed by this export. Composite keys, NULL values, Unicode, binary data and exact decimal/bigint values are supported. Text/ntext/image/XML matching keys are rejected because they do not support ordinary SQL equality.
 

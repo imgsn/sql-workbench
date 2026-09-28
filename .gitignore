@@ -1,4 +1,5 @@
 bin/
+artifacts/
 obj/
 publish/
 .playwright-cli/
@@ -10,3 +11,4 @@ tests/.browser-fixture.json
 tests/.live-smoke.js
 .cr/
 *.csproj.user
+.playwright-mcp/

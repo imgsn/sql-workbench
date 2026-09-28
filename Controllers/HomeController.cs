@@ -9,7 +9,7 @@ public class HomeController : Controller
         var titles = new Dictionary<string, string> {
             ["schema"] = "Schema compare", ["data"] = "Data compare",
             ["explorer"] = "Database explorer", ["connections"] = "Connections",
-            ["scripts"] = "Schema scripts", ["inserts"] = "INSERT generator"
+            ["scripts"] = "Schema scripts", ["inserts"] = "INSERT generator", ["query"] = "Query editor"
         };
         if (!titles.TryGetValue(tool, out var title)) return NotFound();
         return View(new WorkbenchViewModel(tool, title, demo));
