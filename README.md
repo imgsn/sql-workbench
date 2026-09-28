@@ -1,5 +1,7 @@
 # SQL Workbench
 
+[Project page](https://imgsn.github.io/sql-workbench/) · [GitHub repository](https://github.com/imgsn/sql-workbench)
+
 ASP.NET Core 10 MVC workbench for an internal development team. No sign-in.
 Connect to SQL Server, inspect metadata, compare schemas and rows, and download
 schema or INSERT scripts. The application never applies generated scripts.
